@@ -1,0 +1,75 @@
+#include <Portenta_H7_TimerInterrupt.h>
+#include <Portenta_H7_ISR_Timer.h>
+#include <Portenta_H7_ISR_Timer.hpp>
+
+#include <AccelStepper.h>
+#include <MultiStepper.h>
+
+//Pins
+int directionPin=6; //Dirección
+int stepPin=7; //Pulso de movimiento
+//setminimun pulse with =100
+
+int PasosMover;
+int Posicion;
+
+
+//incilizamos el motor paso a paso
+AccelStepper stepper(AccelStepper::DRIVER, stepPin, directionPin);
+
+void setup() {
+  // put your setup code here, to run once:
+  //stepper.setEnablePin(enablePin);
+  
+  pinMode(stepPin, OUTPUT);
+  pinMode(directionPin, OUTPUT);
+
+  // pinMode(LED_BUILTIN, OUTPUT);
+
+
+  Serial.begin(9600);
+  
+
+  // Setup timer
+  HardwareTimer *MyTimer = new HardwareTimer(TIM1);
+  MyTimer->setOverflow(50, MICROSEC_FORMAT); // Set timer period for 100us
+  MyTimer->attachInterrupt(timerISR); // Attach interrupt function
+  MyTimer->resume(); // Start the timer
+
+  while(!Serial.available()){
+  }
+      
+  stepper.setMaxSpeed(20000.0);
+  stepper.setAcceleration(800000.0);
+  stepper.setSpeed(18000.0);
+  stepper.setMinPulseWidth(100);
+
+  Serial.setTimeout(1);
+
+}
+
+void loop() {
+
+//if (Serial.available()){
+
+    String str= Serial.readString();
+    if(str.length()>0){
+      PasosMover= str.toInt();
+      stepper.move(PasosMover);
+      Posicion=stepper.currentPosition();
+      Serial.println(Posicion);
+    }
+    // if (PasosMover==1000){
+    //   digitalWrite(LED_BUILTIN, LOW);
+    // }
+    // else{
+    //   digitalWrite(LED_BUILTIN, HIGH);
+    
+    // }
+
+}
+
+// Timer ISR
+void timerISR() {
+  stepper.run();
+}
