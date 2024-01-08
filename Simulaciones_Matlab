@@ -1,0 +1,104 @@
+clc;clear all;
+
+%%llamo a los parametros
+run("Param_BolaPinPon.m")
+%llamo a las A, B, C y D
+run("Modelo_Simplificado.m")
+
+%Referencia
+REF=0;
+
+%%Simple
+Angulo=0;
+CondicionesIni=[-0.4;0];
+ErrorPos=REF-CondicionesIni(1);
+% Entrada=Angulo;
+
+%%Complejo
+% VelocidadAng=0;
+% CondicionesIni=[0;0;0]; %de la bola y de la barra
+% Entrada=VelocidadAng;
+
+% EstadoAct=CondicionesIni;
+
+%%---------------------------------------Bucle cerrado---------------------
+
+%Simulacion bucle cerrado
+
+%tiempo de la simulacion
+N=20;
+% muestras
+Muestra=0.05;
+ts=Muestra:Muestra:N;
+Salida(1)=0;
+
+% bucle para elección de los valores de Q y R
+for Y=1:10
+    Q=Y*1;
+     Q_Simp=[10 0;0 10];
+ R_Simp=[0.1];
+ EstadoAct=CondicionesIni;
+    run("Modelo_Simplificado.m")
+% bucle del sistema en cadena cerrada
+
+    for x=1:N/Muestra
+            Error(x)=(K(1)*REF-K*EstadoAct);
+            if Error(x)>2*pi
+                Error(x)=2*pi;
+            elseif Error(x)<-2*pi
+                Error(x)=-2*pi;
+            end
+        SigEstado=A*EstadoAct+B*Error(x)*n;
+        Salida(x)=C*EstadoAct+D*Error(x)*n;
+        EstadoAct=SigEstado;
+    end
+    plot(ts,Salida,'DisplayName',"Q2,2="+string(Q));
+    ylim([-0.4 0.4]);
+    xlim([0 N]);
+    hold on
+end
+%%------------------------------------------------------------------------
+
+% %---------------------------------------Bucle abierto---------------------
+% N=5;
+% Muestra=0.01;
+% ts=0.01:Muestra:N;
+%  for x=1:N/Muestra
+% 
+% 
+%         %Entrada=-500*sin(20*pi*x*Muestra);
+% 
+%         SigEstado=A*EstadoAct+B*Entrada*n;
+% 
+%         % if SigEstado(1)<-0.5
+%         %     SigEstado(2)=0;
+%         %     SigEstado(1)=-0.5;
+%         % end
+% 
+%         Salida(x)=C*EstadoAct+D*Entrada*n;
+% 
+% 
+%         % AcAngular(x)=(SigEstado(4)-EstadoAct(4))/Muestra;
+% 
+%         EstadoAct=SigEstado;
+% 
+%         % Entrada=0;
+% 
+%         % if x*Muestra>=1
+%         %      Entrada=1000;
+%         %  end
+% 
+% 
+%         % if Salida(x)>0.25
+%         %     Entrada=-500*Salida(x);
+%         % elseif Salida(x)<-0.25
+%         %     Entrada=500*(-Salida(x));
+%         % end
+% 
+%         % if Salida(x)>0.25
+%         %     Entrada=-50;
+%         % elseif Salida(x)<-0.25
+%         %     Entrada=300;
+%         % end
+%   end
+% %-------------------------------------------------------------------------
