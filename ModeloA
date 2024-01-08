@@ -1,0 +1,21 @@
+
+A_Simp=[0 1; 0 0];
+B_Simp=[0; n*(-m*g)/(m+Je/R^2)];
+C_Simp=[1 0];
+D_Simp=[0];
+
+
+%modelo continuo
+sys_ini=ss(A_Simp,B_Simp,C_Simp,D_Simp);
+
+%modelo discreto
+sysd = c2d(sys_ini,0.05);
+
+A=sysd.A;
+B=sysd.B;
+C=sysd.C;
+D=sysd.D;
+
+
+%calculo de K
+K = lqr(sysd,Q_Simp,R_Simp);
