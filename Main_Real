@@ -1,0 +1,20 @@
+clc;clear all;
+%%llamo a los parametros
+run("Param_BolaPinPon.m")
+%llamo a las A, B, C y D
+run("Modelo_Simplificado.m")
+%Referencia
+REF=0;
+
+Angulo=0;
+CondicionesIni=[0;0];
+Entrada=Angulo;
+
+% VelocidadAng=0;
+% CondicionesIni=[0;0;0]; %de la bola y de la barra
+% Entrada=VelocidadAng;
+
+EstadoAct=CondicionesIni;
+
+%Real
+run("BolaNaranja.m")
