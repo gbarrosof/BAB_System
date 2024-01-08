@@ -1,0 +1,19 @@
+%modelo incluyendo el torque del motor
+A_Comp=[0 1 0 ;n*0 n*0 n*m*g/(m+Je/R^2);0 0 0];
+B_Comp=[0;0;1];
+C_Comp=[1 0 0];
+D_Comp=[0];
+
+sys_ini=ss(A_Comp,B_Comp,C_Comp,D_Comp);
+
+%modelo discreto
+sysd = c2d(sys_ini,0.01);
+
+A=sysd.A;
+B=sysd.B;
+C=sysd.C;
+D=sysd.D;
+
+
+%calculo de K
+K = lqr(sysd,Q_Comp,R_Comp);
