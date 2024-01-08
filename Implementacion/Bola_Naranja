@@ -1,0 +1,179 @@
+cam=webcam(2);
+
+%tomo una captura de la camara
+imagen=snapshot(cam);
+
+%mido el tamaño del frame de la camara
+framesize=size(cam);
+
+%llamo wb a una barra de espera la cual me va a servir para poder salir del
+%bucle while
+wb = waitbar(0,'-','Name','Espera..','CreateCancelBtn','delete(gcbf)');
+
+
+
+i=2;
+k=1;
+j=1;
+posicionAnt=0;
+anguloAnt=0;
+% figure(2)
+t(1)=0;
+
+
+com='COM4';
+
+%elimino lo que este en el puerto serie
+delete(instrfind({'Port'},{com}));
+
+%Inicializo el puerto serial que utilizaré
+puerto_serial=serialport(com, 2000000);
+
+%establezco su baud rate en 9600 al igual que el arduino para que tenga una
+%correcta comunicacion 
+%puerto_serial.BaudRate=9600;
+
+%aviso de error en la conexion
+warning('off','MATLAB:serial:fscanf:unsuccessfulRead');
+
+%Abro el puerto serial
+fopen(puerto_serial);
+pause(0.2);
+
+dato=0;
+
+%Inicio el bucle de tiempo
+tic;
+while 1
+%cojo el tiempo de cada iteración
+    t(i)=toc;
+
+%tomo una captura de pantalla    
+    img0=snapshot(cam);
+
+    img0 = img0(180:280, 1:640, 1:3);
+%convierte los valores de rojo, verde y azul de una imagen RGB en valores de luminancia (Y) y crominancia (I y Q) de una imagen NTSC.
+    YIQ=rgb2ntsc(img0);
+%cojo el valor de cromancia ya que los positivos es el naranja
+    img=imsubtract(YIQ(:,:,2),0);
+    % ---------------Filtros------------
+
+%Filtro la imagen gris utilizando un filtro de wiener
+%utilizando metodos estadisticos filtra el ruido de la imagen de 20x20
+%alrededor de cada pixel sacando el valor medio
+    I=wiener2(img,[10,10]);
+    bw=imbinarize(I,0.15);%0.2 es mucho pero creo que 0.25 es poco
+
+%cada pixel de salida tiene como valor la media del 3x3 de alrededor
+%del aimagen binarizada    
+    bw=medfilt2(bw);
+
+%Realiza una erosion de las imagenes blancas seguido de una dilatación con
+%forma de disco de valor 1
+    bw=imopen(bw,strel('disk',1)); %el valor de 1 creo que es pequeño, deberia aumentarlo
+    
+%elimina las areas cuyos pixeles conjuntos sean menores a 1000
+    bw=bwareaopen(bw,150);
+
+%Rellena de 1 todos aquellos 0 encerrados por 1
+    bw=imfill(bw,'holes');
+
+%devuelve la matriz L con diferenciacion entre los distintos objetos N
+%la matriz L es una matriz de tamaño de la imagen binarizada pero con
+%enteros siendo: de valor 0 el fonde, de valor 1 el objeto 1, de valor 2
+%el objeto 2...
+    [L,N]=bwlabel(bw);
+
+    %-----------------regionprops------------------
+            % [B,L] = bwboundaries(I,'noholes');
+ % mide diferentes propiedades, segun tu le digas, de la matriz de etiquetas   
+     prop=regionprops(L, 'Area', 'Centroid', 'Circularity');
+
+    %----------------------------------------------
+
+
+  %pantalla de 640x400   
+
+    for n=1:N
+% obtener centroide
+        c=round(prop(n).Centroid); 
+
+%obtener cuanto se aproxima a un circulo        
+        Circulo=round(prop(n).Circularity);
+
+        if Circulo>0.95 && t(i)>2   
+           
+%resolucion (640px 400px)
+
+Pos=c(1)-320;
+posicion(i)=Pos*(0.4/320);
+velocidad(i)=(posicion(i)-posicion(i-1))/(t(i)-t(i-1));
+ 
+% angulo(i)=fscanf(puerto_serial, '%d')';
+% rotacion(i)=(angulo(i)-angulo(i-1))/(t(i)-t(i-1));
+
+
+%%----------------------bucle cerrado--------------------
+%simple
+            EstadoAct=[posicion(i);velocidad(i)];
+%complejo
+            %EstadoAct=[posicion(i);velocidad(i);angulo(i)];
+            
+            giro=(K(1)*REF-K*EstadoAct)/n;
+            if giro>2*pi
+                giro=2*pi;
+            elseif giro<-2*pi
+                giro=-2*pi;    
+            end
+
+%%---------------------------------------------------
+
+
+%%-----------------bucle abierto--------------------
+            % if t(i)<2.5
+            %     giro=pi/2;
+            % else
+            %     giro=-2*pi;
+            % end
+            %giro=pi*sin(2*pi*t(i));
+            
+            %giro=0;
+            %giro=pi;
+            
+        %pasos=-4000;
+%%---------------------------------------------------
+
+%%-------------Escribir por el puerto serie-------------
+            pasos=giro*(8000/(2*pi));
+            pasos= num2str(pasos);
+            write(puerto_serial,pasos,"int8");
+            Ang=readline(puerto_serial);
+            AnguloMot(i)=str2num(Ang);
+
+%-----------------------------------------------------          
+posicionAnt=posicion(i-1);
+
+        end
+    end
+ %cuadro para poder candelar el bucle while 1 y dibujar la gráfica
+%____________________________________________________    
+   if ~ishandle(wb)
+       %figure(1)
+      if length(t)>length(posicion)
+        posicion(i)=0;
+      end
+    t=t-2;
+    plot(t(:),posicion(:),'r',xlabel('Tiempo (s)'),ylabel('posicion x'));
+        
+    
+
+        break
+    else
+        %waitbar(i/10,wb,['num: '  num2str(i)]);
+    end
+%_____________________________________________________
+%numero de iteraciones
+    i=i+1;
+end
+clear puerto_serial;
+clear cam;
