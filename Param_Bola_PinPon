@@ -1,0 +1,21 @@
+%declaro los valores de cada variable y las condiciones iniciales
+m=0.02;
+%R=0.04;
+R=0.04;
+r=0.039;
+Je=2/5*m*((R^5-r^5)/R^3-r^3);
+g=9.81;
+l=0.4;
+Jb=(1/12)*1*1^2; %0.09
+n=1/16; %relacion de transmision
+%ts=0.01
+
+Q_Simp=[1 0;
+    0 1]; %x1=prioriza distancia al centro(error a la ref) x2=prioriza velocidad de la esfera
+R_Simp=[0.1]; %prioriza consumo de energia (entrada)
+
+
+Q_Comp=[1 0 0;
+    0 1 0;
+    0 0 0.01]; %x1=prioriza distancia al centro(error a la ref) x2=prioriza velocidad de la esfera
+R_Comp=[1]; %prioriza consumo de energia (entrada)
