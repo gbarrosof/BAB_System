@@ -1,0 +1,14 @@
+function giro=EspacioEstadoVelocidad(Pos,Vel,AngMot,giroAnt,K,REF)
+
+        EstadoAct=[Pos;Vel;AngMot];
+        giro=(K(1)*REF-K*EstadoAct);
+        giro=giro*8000/(2*pi);
+        giro=giro-giroAnt;
+
+        if giro>20000           
+            giro=20000;
+       elseif giro<-20000          
+            giro=-20000;    
+        end
+        
+end
