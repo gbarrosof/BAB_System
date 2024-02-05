@@ -11,16 +11,23 @@ framesize=size(cam);
 wb = waitbar(0,'-','Name','Espera..','CreateCancelBtn','delete(gcbf)');
 
 
-
+a=0;
 i=2;
 k=1;
 j=1;
+flag=0;
+Centro=0
 posicionAnt=0;
 anguloAnt=0;
 % figure(2)
 t(1)=0;
 
+%  plot(t(:),posicionAnt,'r'),xlabel('Tiempo (s)'), ylabel('posicion x');
 
+%  figure(3)
+% plot(t(:),posicionAnt,'r'),xlabel('Tiempo (s)'), ylabel('velocidad x');
+
+%posicion(1)=-0.45;
 com='COM4';
 
 %elimino lo que este en el puerto serie
@@ -38,16 +45,15 @@ warning('off','MATLAB:serial:fscanf:unsuccessfulRead');
 
 %Abro el puerto serial
 fopen(puerto_serial);
+puerto_serial.Timeout=0.02;
+
 pause(0.2);
 
 dato=0;
 
-%Inicio el bucle de tiempo
 tic;
 while 1
-%cojo el tiempo de cada iteración
     t(i)=toc;
-
 %tomo una captura de pantalla    
     img0=snapshot(cam);
 
@@ -84,14 +90,19 @@ while 1
 %el objeto 2...
     [L,N]=bwlabel(bw);
 
+
     %-----------------regionprops------------------
             % [B,L] = bwboundaries(I,'noholes');
- % mide diferentes propiedades, segun tu le digas, de la matriz de etiquetas   
+ % mide diferentes propiedades, segun tu le digas, de la matriz de
+ % etiquetas   
      prop=regionprops(L, 'Area', 'Centroid', 'Circularity');
-
     %----------------------------------------------
+%muestra la matriz binarizada y con los filtros correspondientes
+% figure(1)
+  %  imshow(bw);
 
-
+%realiza un bucle donde comprueba que el objeto correspondiente
+  %mostrado es aproximadamente un circulo y muestra su centroide en la
   %pantalla de 640x400   
 
     for n=1:N
@@ -103,69 +114,116 @@ while 1
 
         if Circulo>0.95 && t(i)>2   
            
-%resolucion (640px 400px)
+%Si detecta un circulo es la esfera, por tanto entra en el bucle de control
+%resolucion (640px)
+if flag==0
+      Centro=c(1);
+      flag=1;
+end
 
-Pos=c(1)-320;
+Pos=c(1)-Centro; 
+
+
+%%----------------------ruido blanco camara--------------
+    % ruidoBlancoCamara(i)=5*(640/100)*(rand-0.5); % +-5 porciento de ruido
+    % Pos=Pos+ruidoBlancoCamara(i);
+%--------------------------------------------------------
+
 posicion(i)=Pos*(0.4/320);
 velocidad(i)=(posicion(i)-posicion(i-1))/(t(i)-t(i-1));
- 
-% angulo(i)=fscanf(puerto_serial, '%d')';
-% rotacion(i)=(angulo(i)-angulo(i-1))/(t(i)-t(i-1));
 
 
-%%----------------------bucle cerrado--------------------
-%simple
-            EstadoAct=[posicion(i);velocidad(i)];
-%complejo
-            %EstadoAct=[posicion(i);velocidad(i);angulo(i)];
+%_________________LAZO DE CONTROL POSICION________________________
+
+giro=EspacioEstadoPosicion(posicion(i),velocidad(i),K,REF);
+
+%________________________________________________________________
+
+
+%----------------------Giro Posicion Serial----------------------
+           
+            % %%_____ruido blanco posicion____
+            %     ruidoBlancoPos(i)=5*(8000/100)*(rand-0.5);
+            %     giro=giro+ruidoBlancoPos(i); % +-5 porciento de ruido
+            % %_________________________________
+T0(i)=toc;
+            pasos(i)=giro*(8000/(2*pi));
+            pasosStr= num2str(pasos(i));
+            write(puerto_serial,pasosStr,"int8");
             
-            giro=(K(1)*REF-K*EstadoAct)/n;
-            if giro>2*pi
-                giro=2*pi;
-            elseif giro<-2*pi
-                giro=-2*pi;    
-            end
-
-%%---------------------------------------------------
-
-
-%%-----------------bucle abierto--------------------
-            % if t(i)<2.5
-            %     giro=pi/2;
-            % else
-            %     giro=-2*pi;
-            % end
-            %giro=pi*sin(2*pi*t(i));
-            
-            %giro=0;
-            %giro=pi;
-            
-        %pasos=-4000;
-%%---------------------------------------------------
-
-%%-------------Escribir por el puerto serie-------------
-            pasos=giro*(8000/(2*pi));
-            pasos= num2str(pasos);
-            write(puerto_serial,pasos,"int8");
+        
+            T1(i)=toc;
             Ang=readline(puerto_serial);
-            AnguloMot(i)=str2num(Ang);
+            T2(i)=toc;
+            if isempty(Ang)
+                if isempty(AnguloMot(i-1))
+                    AnguloMot(i)=0;
+                   
+                else
+                    AnguloMot(i)=AnguloMot(i-1);
+                    a=a+1;
+                end
+            else
+                AnguloMot(i)=str2num(Ang);
+            end
+            
+            
+            
+           
+%------------------------------------------------------
 
-%-----------------------------------------------------          
 posicionAnt=posicion(i-1);
 
+% anguloAnt=angulo;
         end
     end
- %cuadro para poder candelar el bucle while 1 y dibujar la gráfica
+ %cuadro para poder candelar el bucle while 1
 %____________________________________________________    
    if ~ishandle(wb)
-       %figure(1)
       if length(t)>length(posicion)
         posicion(i)=0;
       end
+      if length(t)>length(AnguloMot)
+        AnguloMot(i)=0;
+      end
+
+      if length(t)>length(pasos)
+        pasos(i)=0;
+      end
+
+      if length(t)>length(velocidad)
+        velocidad(i)=0;
+      end
+       % if length(t)>length(ruidoBlancoCamara)
+       %  ruidoBlancoCamara(i)=0;
+       % end
+
+       % if length(t)>length(ruidoBlancoPos)
+       %  ruidoBlancoPos(i)=0;
+       % end
+       
+
+
     t=t-2;
-    plot(t(:),posicion(:),'r',xlabel('Tiempo (s)'),ylabel('posicion x'));
-        
-    
+    figure(1);
+    plot(t(:),posicion(:),'r');
+   xlabel('Tiempo (s)');
+   ylabel('Posición esfera');
+title("Posición real de la esfera respecto al tiempo");
+
+    figure(2); 
+plot(t(:),velocidad(:),'r');
+xlabel('Tiempo (s)');
+   ylabel('Velocidad esfera');
+title("Velocidad de la esfera respecto al tiempo");
+
+      figure(3);  
+    plot(t(:),AnguloMot(:),'r');
+    hold on 
+    plot(t(:),pasos(:),'b');
+    xlabel('Tiempo (s)');
+   ylabel('Posición Motor');
+title("Diferencia entre numero de pasos ideal y real");
 
         break
     else
