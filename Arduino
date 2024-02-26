@@ -6,70 +6,155 @@
 #include <MultiStepper.h>
 
 //Pins
-int directionPin=6; //Dirección
-int stepPin=7; //Pulso de movimiento
-//setminimun pulse with =100
+int directionPin = 6;  //Dirección
+int stepPin = 7;       //Pulso de movimiento
 
-int PasosMover;
-int Posicion;
+
+//Modos del micro
+bool Posicion = false;
+bool Velocidad = false;
 
 
 //incilizamos el motor paso a paso
 AccelStepper stepper(AccelStepper::DRIVER, stepPin, directionPin);
 
+//incicializamos las funciones¿?
+//controlPosicion(int Posicion, int Pasos);
+
 void setup() {
   // put your setup code here, to run once:
   //stepper.setEnablePin(enablePin);
-  
+
   pinMode(stepPin, OUTPUT);
   pinMode(directionPin, OUTPUT);
 
   // pinMode(LED_BUILTIN, OUTPUT);
 
 
-  Serial.begin(9600);
-  
+  Serial.begin(1000000);
+
 
   // Setup timer
   HardwareTimer *MyTimer = new HardwareTimer(TIM1);
-  MyTimer->setOverflow(50, MICROSEC_FORMAT); // Set timer period for 100us
-  MyTimer->attachInterrupt(timerISR); // Attach interrupt function
-  MyTimer->resume(); // Start the timer
+  MyTimer->setPrescaleFactor(1);
+  MyTimer->setOverflow(1000, TICK_FORMAT);  // Set timer period for 100us
+  MyTimer->attachInterrupt(timerISR);        // Attach interrupt function
+  MyTimer->resume();                         // Start the timer
 
-  while(!Serial.available()){
+  while (!Serial.available()) {
   }
-      
-  stepper.setMaxSpeed(20000.0);
-  stepper.setAcceleration(800000.0);
-  stepper.setSpeed(18000.0);
-  stepper.setMinPulseWidth(100);
 
+  stepper.setMaxSpeed(1000000.0);
+  stepper.setAcceleration(1000000.0);  //100000
+  stepper.setSpeed(100000.0);        //11000
+  stepper.setMinPulseWidth(20);
   Serial.setTimeout(1);
-
 }
+
+
+char msgbuff[32];
+char resbuff[32];
 
 void loop() {
 
-//if (Serial.available()){
 
-    String str= Serial.readString();
-    if(str.length()>0){
-      PasosMover= str.toInt();
-      stepper.move(PasosMover);
-      Posicion=stepper.currentPosition();
-      Serial.println(Posicion);
+  //Serial.write(45)
+  memset(msgbuff, 0, 32);
+  memset(resbuff, 0, 32);
+  int nbytes = Serial.available();
+  if (nbytes >= 31) {
+    // data packet is 32 bytes
+    Serial.readBytes(msgbuff, 32);
+    // 0xFF is the sync character
+    if (msgbuff[0] == 0xFF) {
+
+      // validate checksum
+      uint8_t cs = 0;
+      for (int i = 0; i < 31; i++) {
+        cs += msgbuff[i];
+      }
+      if (cs == msgbuff[31]) {
+        // message is valid, process command
+        // CurrentPos is position of motor in steps
+        int CurrentPos = 0;
+        CurrentPos = stepper.currentPosition();
+        //enter buffer to Steps
+        memcpy(resbuff + 1, "Pos:", 4);
+        msgbuff[31] = 0;
+        int32_t Move = *((int32_t *)(msgbuff + 2));
+        char cstr[5] = { "0" };
+        //Prueba
+        itoa(CurrentPos, cstr, 10);
+        memcpy(resbuff + 1 + 4, cstr, 5);
+        //Differents modes
+        switch (msgbuff[1]) {
+          // echo test command
+          case 'E':
+            resbuff[1] = 'E';
+            Posicion = false;
+            Velocidad = false;
+            break;
+          case 'P':
+            //code of control by position
+            Posicion = true;
+            Velocidad = false;
+            controlPosicion(CurrentPos, Move);
+            break;
+          case 'V':
+            //code of control by velocity
+            Posicion = false;
+            Velocidad = true;
+            controlVelocidad(CurrentPos, Move);
+            break;
+        }
+        //enviar el angulo del motor
+      } else {
+        memcpy(resbuff + 1, "Bad CheckSum", 12);
+      }
+    } else {
+      // if the message does not start in the sync character discard
+      memcpy(resbuff + 1, "Bad Synq", 12);
     }
-    // if (PasosMover==1000){
-    //   digitalWrite(LED_BUILTIN, LOW);
-    // }
-    // else{
-    //   digitalWrite(LED_BUILTIN, HIGH);
-    
-    // }
+    // prepare message to send
+    resbuff[0] = 0xFF;
+    uint8_t csr = 0;
+    for (int i = 0; i < 31; i++) {
+      csr += resbuff[i];
+    }
+    resbuff[31] = csr;  //resbuff[31] = csr;
+    // send response
+    Serial.write(resbuff, 32);
+  } else {
+    // add code to handle tout
+  }
+}
 
+
+void controlPosicion(int CurrentPos, int32_t Steps) {
+  stepper.moveTo(Steps);
+}
+
+void controlVelocidad(int CurrentPos, int32_t Velocity) {
+
+  if (CurrentPos > 1000 & Velocity > 0) {
+    //stepper.setSpeed(-stepper.speed());
+  } else if (CurrentPos < -1000 & Velocity < 0) {
+    //stepper.setSpeed(-stepper.speed());
+  } else {
+    stepper.setSpeed(Velocity);
+  }
 }
 
 // Timer ISR
 void timerISR() {
   stepper.run();
+  // if (Posicion == 1) {
+  //   stepper.run();
+  // }
+  // else if (Velocidad == 1) {
+  //   stepper.runSpeed();
+  // }
+  // else{
+  //   stepper.stop();
+  // }
 }
