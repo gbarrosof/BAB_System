@@ -1,0 +1,430 @@
+clc;clear all;
+%% GUI
+%Modo=false -> control por posicion
+%Modo=true -> control por velocidad
+
+%Control=false -> control por PID
+%Control=true -> control por Espacio de estados
+
+%Pelota = false -> Pelota naranja
+%Pelota = true -> Pelota acero
+
+%REF = en metros, posición que el controlador va a intentar alcanzar
+
+Modo=false;
+Control=true;
+Pelota=false;
+REF=0;
+
+%% Declaro los parametros de una de las bolas
+if Pelota==false
+    %% Parametros bola naranja
+    m=0.02;
+    R=0.04;
+    r=0.039;
+    Je=2/5*m*((R^5-r^5)/R^3-r^3);
+    g=9.81;
+    l=0.4;
+    Jb=(1/12)*1*1^2; %0.09
+    n=1/16; %relacion de transmision
+    Q_Pos = [10 0;0 1];
+    R_Pos = [0.1];
+    Q_Vel = [100 0 0; 0 100 0; 0 0 1];
+    R_Vel = [0.5]; 
+else
+    %% Parametros bola de acero
+    m=0.26;
+    R=0.04;
+    r=0.04;
+    Je=0.4*m*R^2;
+    g=9.81;
+    l=0.4;
+    Jb=(1/12)*1*1^2; %0.09
+    n=1/16; %relacion de transmision
+    Q_Pos = [1 0;0 1]; %[10 0;0 1]; %ruido blanco de la camara -> [1 0;0 1]
+    R_Pos = [1]; %[0.7] -> %ruido blanco de la camara -> [1]
+    Q_Vel = [1 0 0; 0 1 0; 0 0 0.1];
+    R_Vel = [1]; 
+end
+%% calculo el valor de K
+if Modo==false
+    %% Modelo A (posicion)
+    %modelo continuo
+    sys_ini=ss([0 1; 0 0],[0; n*(-m*g)/(m+Je/R^2)],[1 0],[0]);
+    %modelo discreto
+    sysd = c2d(sys_ini,0.1);
+    A=sysd.A;
+    B=sysd.B;
+    C=sysd.C;
+    D=sysd.D;
+    %calculo de K del sistema discreto
+    K = dlqr(A,B,Q_Pos,R_Pos);
+else
+    %% Modelo B (velocidad)
+    %modelo incluyendo el torque del motor
+    sys_ini=ss([0 1 0 ;n*0 n*0 -n*m*g/(m+Je/R^2);0 0 0],[0;0;1],[1 0 0],[0]);    
+    %modelo discreto
+    sysd = c2d(sys_ini,0.1);  
+    A=sysd.A;
+    B=sysd.B;
+    C=sysd.C;
+    D=sysd.D;
+    %calculo de K del modelo discreto
+    K = lqr(sysd,Q_Vel,R_Vel);
+end
+
+%% inicializo la camara
+
+%establezco el objeto cam como la webcam conectada por usb
+cam=webcam(2);
+%tomo una captura de la camara
+imagen=snapshot(cam);
+%mido el tamaño del frame de la camara
+framesize=size(cam);
+%llamo wb a una barra de espera la cual me va a servir para poder salir del
+%bucle while
+wb = waitbar(0,'-','Name','Espera..','CreateCancelBtn','delete(gcbf)');
+%% inicializo algunas variables
+% Inicio en 2 para las condiciones de i-1 tipo velocidad de la bola etc.
+i=2;
+%Establecer un flag para establecer el centro al inicio del bucle
+flag=0;
+% Centro de la pelota
+Centro=0;
+%incio en 0 segundos
+t(1)=0;
+
+%% inicializo el puerto serie
+
+com='COM4';
+%elimino lo que este en el puerto serie
+delete(instrfind({'Port'},{com}));
+%Inicializo el puerto serial que utilizaré
+puerto_serial=serialport(com, 1000000);
+%Baud rate en 1000000 al igual que el arduino para una correcta comunicacion 
+%aviso de error en la conexion
+warning('off','MATLAB:serial:fscanf:unsuccessfulRead');
+%Abro el puerto serial
+fopen(puerto_serial);
+%establezco el tiempo maximo de espera del puerto serie
+puerto_serial.Timeout=0.005;
+%espero a que se establezca la conexión
+pause(1);
+
+dato=0;
+aux=0;
+AnguloMot(1)=0;
+giroAnt=0;
+
+
+ErrorPrev=0.0;
+SumError=0.0;
+
+%%  inicio bucle de control
+tic;
+while 1
+    %% bucle de camara
+    t(i)=toc;
+%tomo una captura de pantalla    
+    img0=snapshot(cam);
+%Recorto la imagen para que tarde menos en procesarla
+    img0 = img0(180:280, 1:640, 1:3);
+%convierte los valores de rojo, verde y azul de una imagen RGB en valores de luminancia (Y) y crominancia (I y Q) de una imagen NTSC.
+    YIQ=rgb2ntsc(img0);
+%cojo el valor de cromancia ya que los positivos es el naranja
+    img=imsubtract(YIQ(:,:,2),0);
+    % ---------------Filtros------------
+%Filtro la imagen gris utilizando un filtro de wiener
+%utilizando metodos estadisticos filtra el ruido de la imagen de 20x20
+%alrededor de cada pixel sacando el valor medio
+    I=wiener2(img,[10,10]);
+    bw=imbinarize(I,0.15);%0.2 es mucho pero creo que 0.25 es poco
+%cada pixel de salida tiene como valor la media del 3x3 de alrededor
+%del aimagen binarizada    
+    bw=medfilt2(bw);
+%Realiza una erosion de las imagenes blancas seguido de una dilatación con
+%forma de disco de valor 1
+    bw=imopen(bw,strel('disk',1)); %el valor de 1 creo que es pequeño, deberia aumentarlo
+    
+%elimina las areas cuyos pixeles conjuntos sean menores a 1000
+    bw=bwareaopen(bw,150);
+
+%Rellena de 1 todos aquellos 0 encerrados por 1
+    bw=imfill(bw,'holes');
+
+%devuelve la matriz L con diferenciacion entre los distintos objetos N
+%la matriz L es una matriz de tamaño de la imagen binarizada pero con
+%enteros siendo: de valor 0 el fonde, de valor 1 el objeto 1, de valor 2
+%el objeto 2...
+    [L,N]=bwlabel(bw);
+
+
+    %-----------------regionprops------------------
+            % [B,L] = bwboundaries(I,'noholes');
+ % mide diferentes propiedades, segun tu le digas, de la matriz de
+ % etiquetas   
+     prop=regionprops(L, 'Area', 'Centroid', 'Circularity');
+    %----------------------------------------------
+%muestra la matriz binarizada y con los filtros correspondientes
+% figure(1)
+  %  imshow(bw);
+
+%realiza un bucle donde comprueba que el objeto correspondiente
+  %mostrado es aproximadamente un circulo y muestra su centroide en la
+  %pantalla de 640x400   
+
+    for n=1:N
+%% Detecto bola e incio en control
+% obtener centroide
+        c=round(prop(n).Centroid); 
+
+%obtener cuanto se aproxima a un circulo        
+        Circulo=round(prop(n).Circularity);
+
+        if Circulo>0.90 %&& t(i)>2              
+%% inicializo valores del bucle una vez detectada la bola
+% Si detecta un circulo es la esfera, por tanto entra en el bucle de control
+% resolucion (640px)
+
+%incializo el vector de 32 bytes a escribir por el puerto serie
+comvec = uint8(1:32);
+cs1=uint32(0);
+cs2=uint32(0);
+%byte de verificacion
+comvec(1) = 0xFF;
+% Tipos de control en el arduino
+
+%Posicion del centro
+if flag==0
+      Centro=c(1);
+      flag=1;
+      
+end
+Pos=c(1)-Centro; 
+%% Posicion y velocidad de la bola
+
+%%----------------------ruido blanco camara--------------
+    % ruidoBlancoCamara(i)=2.5*(320/100)*(rand-0.5); % +-2.5 porciento de ruido
+    % Pos=Pos+ruidoBlancoCamara(i);
+    % posicion(1)=Pos*(0.4/320);
+%--------------------------------------------------------
+posicion(i)=Pos*(0.4/320);
+velocidad(i)=(posicion(i)-posicion(i-1))/(t(i)-t(i-1));
+
+
+%% _________________LAZO DE CONTROL________________________
+
+if Control==true
+    %% Espacio de estados
+    if Modo==false
+        %% Poscion
+        comvec(2)= 'P';
+        EstadoAct=[posicion(i);velocidad(i)];
+        error(i)=1000*(K(1)*REF-K*EstadoAct);
+        control=error(i);
+
+        if control>5000
+            control=5000;
+        elseif control<-5000
+            control=-5000;
+        end
+        giro = control;
+        %giro=giro*(8000/(2*pi));
+        pasos(i)=giro;
+    else
+        %% Velocidad
+        comvec(2)= 'V';
+        if length(t)-1>(length(AnguloMot))
+            AnguloMot(i-1)=AnguloMot(length(AnguloMot));
+        end
+            Ang=(AnguloMot(i-1)*2*pi)/8000;
+            EstadoAct=[posicion(i);velocidad(i);Ang];
+            giro=(K(1)*REF-K*EstadoAct);
+            % Revoluciones por pasos
+            giro=giro*8000/(2*pi);
+            % por ser velocidad relativa
+            %giro=giro-giroAnt;
+            if giro>10000
+                giro=10000;
+            elseif giro<-10000
+                giro=-10000;    
+            end
+            %giroAnt=giro;
+            pasosMot(i)=giro;
+        
+    end
+else
+%% PID
+    if Modo==false
+        comvec(2)= 'P';
+        Kp=10000;
+        Ki=0;
+        Kd=80000;
+    else
+        comvec(2)= 'V';
+        Kp=0;
+        Ki=0;
+        Kd=0;
+    end
+    error(i)=-(REF-posicion(i));
+    ErrorPrev=error(i)-error(i-1);  
+    SumError=SumError+error(i);
+    
+    control=error(i)*Kp+ErrorPrev*Kd+SumError*Ki;
+    if control>5000
+       control=5000;
+    elseif control<-5000
+       control=-5000;
+    end
+    pasos(i)=control;
+    giro = control;
+end
+%% ----------------------Comunicacion Serial----------------------
+           
+            % %%_____ruido blanco posicion____
+                % ruidoBlancoPos(i)=2.5*(8000/100)*(rand-0.5);
+                % giro=giro+ruidoBlancoPos(i); % +-5 porciento de ruido
+            % %_________________________________
+
+        position = int32(giro)
+        comvec(3)= uint8(bitshift(bitand(position,int32(0x000000FF)),   0));
+        comvec(4)= uint8(bitshift(bitand(position,int32(0x0000FF00)),  -8));
+        comvec(5)= uint8(bitshift(bitand(position,int32(0x00FF0000)), -16));
+        comvec(6)= uint8(bitshift(bitand(position,int32(0xFF000000)), -24));
+        %werid 255 1111 1111 -> 127 0111 1111
+        if(position<0 && comvec(6) == 127)
+            comvec(6) = 255;
+        end
+
+        % Calculate cs
+        cs1=uint32(0);
+        cs2=uint32(0);
+        for x = 1:31
+                cs1 = cs1 + uint32(comvec(x));
+        end
+        cs1 = uint8(bitand(cs1,uint32(0xFF)));
+        comvec(32)= cs1;
+        % write to serial port
+           T1(i)=toc;
+           write(puerto_serial,comvec,"uint8");
+           T2(i)=toc;
+           Read=char(read(puerto_serial, 32, "uint8"));
+           T3(i)=toc;
+           %Compruebo si he leido del puerto serie 
+           if isempty(Read)
+               aux=aux+1;
+               VelocidadMot(i)=giro;
+               AnguloMot(i)=AnguloMot(i-1)+VelocidadMot(i)*(t(i)-t(i-1));
+           else
+               Readaux=Read;
+               %Compruebo bit de inicio
+               if Read(1)==0xFF
+                   cs2=uint32(0);
+                   for x = 1:30
+                        cs2 = cs2 + uint32(Read(x));
+                   end
+                   cs2 = uint8(bitand(cs2,uint32(0xFF)));
+                   %Compruebo el byte de suma (ultimo byte)
+                   if Read(32)==cs2
+                       %Cojo solo el numero que me devuelve
+                       Read=Read(6:11);
+                       %Cambio del char a entero
+                       
+                       AnguloMot(i)=int32(str2double(Read));
+                       VelocidadMot(i)=(AnguloMot(i)-AnguloMot(i-1))/(t(i)-t(i-1));
+                       %Print=Pos
+                   else
+                       Print="Error Sum"
+                   end
+               else
+                   Print="Error sync"
+               end
+               T4(i)=toc;
+               %Vacio buffer de lectura
+               Read=[];
+           end
+%------------------------------------------------------
+        end
+    end
+ %cuadro para poder candelar el bucle while 1
+%____________________________________________________    
+%% una vez finalizado el bucel grafico 
+   if ~ishandle(wb)
+      if length(t)>length(posicion)
+        posicion(i)=0;
+      end
+      if length(t)>length(AnguloMot)
+        AnguloMot(i)=0;
+      end
+if Modo==false
+      if length(t)>length(pasos)
+        pasos(i)=0;
+        error(i)=0;
+      end
+      
+else
+    if length(t)>length(pasosMot)
+        pasos(i)=0;
+    end
+    if length(t)>length(VelocidadMot)
+        VelocidadMot(i)=0;
+      end
+end
+
+
+      if length(t)>length(velocidad)
+        velocidad(i)=0;
+      end
+       % if length(t)>length(ruidoBlancoCamara)
+       %  ruidoBlancoCamara(i)=0;
+       % end
+
+       % if length(t)>length(ruidoBlancoPos)
+       %  ruidoBlancoPos(i)=0;
+       % end
+       
+    figure(1);
+    plot(t(:),posicion(:),'r');
+    xlabel('Tiempo (s)');
+    ylabel('Posición esfera');
+    title("Posición real de la esfera respecto al tiempo");
+
+    figure(2); 
+    plot(t(:),velocidad(:),'r');
+    xlabel('Tiempo (s)');
+    ylabel('Velocidad esfera');
+    title("Velocidad de la esfera respecto al tiempo");
+
+if Modo==false
+    figure(3);  
+    yyaxis left
+    plot(t(:),AnguloMot(:),'r','DisplayName',"Pasos Reales");
+    hold on 
+    plot(t(:),pasos(:),'b','DisplayName',"Pasos Ideales");
+    yyaxis right
+    plot(t(:),error(:),'g','DisplayName',"Pasos Ideales");
+    xlabel('Tiempo (s)');
+    ylabel('Posición Motor');
+    title("Diferencia entre numero de pasos ideal y real");
+else
+    figure(3);  
+    plot(t(:),VelocidadMot(:),'r','DisplayName',"Pasos Reales");
+    hold on 
+    plot(t(:),pasosMot(:),'b','DisplayName',"Pasos Ideales");
+   
+    xlabel('Tiempo (s)');
+    ylabel('Posición Motor');
+    title("Diferencia entre velocidad ideal y real");
+end
+    
+
+        break
+   else
+    end
+%_____________________________________________________
+%numero de iteraciones
+    i=i+1;
+end
+%% limpio puertos
+clear puerto_serial;
+clear cam;
