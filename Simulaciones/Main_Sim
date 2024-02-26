@@ -1,104 +1,209 @@
 clc;clear all;
+%% Gui
+%Control=false -> sin control (lazo abierto)
+%Control=true -> control por espacio de estados (lazo cerrado)
 
-%%llamo a los parametros
-run("Param_BolaPinPon.m")
-%llamo a las A, B, C y D
-run("Modelo_Simplificado.m")
+%Modo=false -> control por posicion
+%Modo=true -> control por velocidad
 
-%Referencia
-REF=0;
+%Pelota = false -> Pelota naranja
+%Pelota = true -> Pelota acero
 
-%%Simple
-Angulo=0;
-CondicionesIni=[-0.4;0];
-ErrorPos=REF-CondicionesIni(1);
-% Entrada=Angulo;
+%REF = en metros, posición que el controlador va a intentar alcanzar
+%Ang = angulo incial de la barra
+%VelocidadAng = Velocidad angular de la barra
+%Pos = Posicion incial de la pelota
+%Vel = velocidad inicial de la pelota
 
-%%Complejo
-% VelocidadAng=0;
-% CondicionesIni=[0;0;0]; %de la bola y de la barra
-% Entrada=VelocidadAng;
+Control=true;
+Modo=true;
+Pelota=false;
+REF=0.4;
 
-% EstadoAct=CondicionesIni;
+Ang=0;
+VelocidadAng=0;
+Pos=0;
+Vel=0;
 
-%%---------------------------------------Bucle cerrado---------------------
 
-%Simulacion bucle cerrado
+if Modo==false
+    %% Simple
+    Ang=0;
+    CondicionesIni=[Pos;Vel]; %[Posicion incial, Velocidad inicial]
+    Entrada=Ang;
+else
+    %% Complejo
+    VelocidadAng=0;
+    CondicionesIni=[Pos;Vel;Ang]; %[Posicion incial, Velocidad inicial, Angulo incial barra]
+    Entrada=VelocidadAng;
+end
 
+EstadoAct=CondicionesIni;
+%% Declaro los parametros de una de las bolas
+if Pelota==false
+    %% Parametros bola naranja
+    m=0.02;
+    R=0.04;
+    r=0.039;
+    Je=2/5*m*((R^5-r^5)/R^3-r^3);
+    g=9.81;
+    l=0.4;
+    Jb=(1/12)*1*1^2; %0.09
+    n=1/16; %relacion de transmision
+    Q_Pos = [10 0;0 1];
+    R_Pos = [0.1];
+    Q_Vel = [100 0 0; 0 100 0; 0 0 1];
+    R_Vel = [0.5]; 
+else
+    %% Parametros bola de acero
+    m=0.26;
+    R=0.04;
+    r=0.04;
+    Je=0.4*m*R^2;
+    g=9.81;
+    l=0.4;
+    Jb=(1/12)*1*1^2; %0.09
+    n=1/16; %relacion de transmision
+    Q_Pos = [1 0;0 1]; %[10 0;0 1]; %ruido blanco de la camara -> [1 0;0 1]
+    R_Pos = [1]; %[0.7] -> %ruido blanco de la camara -> [1]
+    Q_Vel = [1 0 0; 0 1 0; 0 0 0.1];
+    R_Vel = [1]; 
+end
+
+
+if Control==true
+%% ---------------------------------------Bucle cerrado---------------------
+
+%% Simulacion
 %tiempo de la simulacion
-N=20;
-% muestras
-Muestra=0.05;
+N=5;
+Muestra=0.1;
 ts=Muestra:Muestra:N;
-Salida(1)=0;
-
-% bucle para elección de los valores de Q y R
+Salida(1)=CondicionesIni(1);
+% bucle
 for Y=1:10
-    Q=Y*1;
-     Q_Simp=[10 0;0 10];
- R_Simp=[0.1];
- EstadoAct=CondicionesIni;
-    run("Modelo_Simplificado.m")
-% bucle del sistema en cadena cerrada
-
+    Var=1/Y; % Valor para variar el valor de Q y de R
+%% calculo el valor de K
+if Modo==false
+    %% Modelo A (posicion)
+    Q_Pos=[10 0;0 0.1];
+    R_Pos=[0.1];
+    %modelo continuo
+    sys_ini=ss([0 1; 0 0],[0; n*(-m*g)/(m+Je/R^2)],[1 0],[0]);
+    %modelo discreto
+    sysd = c2d(sys_ini,0.1);
+    A=sysd.A;
+    B=sysd.B;
+    C=sysd.C;
+    D=sysd.D;
+    %calculo de K del sistema discreto
+    K = dlqr(A,B,Q_Pos,R_Pos);
+else
+    %% Modelo B (velocidad)
+    Q_Vel=[100 0 0; 0 0.1 0; 0 0 0.1];
+    R_Vel=[0.1];
+    %modelo incluyendo el torque del motor
+    sys_ini=ss([0 1 0 ;n*0 n*0 -n*m*g/(m+Je/R^2);0 0 0],[0;0;1],[1 0 0],[0]);    
+    %modelo discreto
+    sysd = c2d(sys_ini,0.1);  
+    A=sysd.A;
+    B=sysd.B;
+    C=sysd.C;
+    D=sysd.D;
+    %calculo de K del modelo discreto
+    K = lqr(sysd,Q_Vel,R_Vel);
+end
+EstadoAct=CondicionesIni;
     for x=1:N/Muestra
-            Error(x)=(K(1)*REF-K*EstadoAct);
-            if Error(x)>2*pi
-                Error(x)=2*pi;
-            elseif Error(x)<-2*pi
-                Error(x)=-2*pi;
-            end
-        SigEstado=A*EstadoAct+B*Error(x)*n;
-        Salida(x)=C*EstadoAct+D*Error(x)*n;
+             Error(x)=(K(1)*REF-K*EstadoAct);
+           
+                if Error(x)>2*pi
+                    Error(x)=2*pi;
+                elseif Error(x)<-2*pi
+                    Error(x)=-2*pi;
+                end
+            %%---------------------------------
+        SigEstado=A*EstadoAct+B*Error(x);
+        Salida(x)=C*EstadoAct+D*Error(x);
         EstadoAct=SigEstado;
     end
-    plot(ts,Salida,'DisplayName',"Q2,2="+string(Q));
-    ylim([-0.4 0.4]);
+    plot(ts,Salida,'DisplayName',"R1,1="+string(Var));
+    xlabel("Tiempo (s)");
+    ylabel("Posicion esfera (m)");
+    title("Simulacion de respuestas con distintos valores de Q y R");
+    %ylim([-0.4 0.4]);
     xlim([0 N]);
     hold on
 end
 %%------------------------------------------------------------------------
+else
+%% ---------------------------------------Bucle abierto---------------------
+    if Modo==false
+        %% Modelo A (posicion)
+        Q_Pos=[10 0;0 0.1];
+        R_Pos=[0.1];
+        %modelo continuo
+        sys_ini=ss([0 1; 0 0],[0; n*(-m*g)/(m+Je/R^2)],[1 0],[0]);
+        %modelo discreto
+        sysd = c2d(sys_ini,0.1);
+        A=sysd.A;
+        B=sysd.B;
+        C=sysd.C;
+        D=sysd.D;
+        %calculo de K del sistema discreto
+        K = dlqr(A,B,Q_Pos,R_Pos);
+     else
+        %% Modelo B (velocidad)
+        Q_Vel=[100 0 0; 0 0.1 0; 0 0 0.1];
+        R_Vel=[0.1];
+        %modelo incluyendo el torque del motor
+        sys_ini=ss([0 1 0 ;n*0 n*0 -n*m*g/(m+Je/R^2);0 0 0],[0;0;1],[1 0 0],[0]);    
+        %modelo discreto
+        sysd = c2d(sys_ini,0.1);  
+        A=sysd.A;
+        B=sysd.B;
+        C=sysd.C;
+        D=sysd.D;
+        %calculo de K del modelo discreto
+        K = lqr(sysd,Q_Vel,R_Vel);
+    end
 
-% %---------------------------------------Bucle abierto---------------------
-% N=5;
-% Muestra=0.01;
-% ts=0.01:Muestra:N;
-%  for x=1:N/Muestra
-% 
-% 
-%         %Entrada=-500*sin(20*pi*x*Muestra);
-% 
-%         SigEstado=A*EstadoAct+B*Entrada*n;
-% 
-%         % if SigEstado(1)<-0.5
-%         %     SigEstado(2)=0;
-%         %     SigEstado(1)=-0.5;
-%         % end
-% 
-%         Salida(x)=C*EstadoAct+D*Entrada*n;
-% 
-% 
-%         % AcAngular(x)=(SigEstado(4)-EstadoAct(4))/Muestra;
-% 
-%         EstadoAct=SigEstado;
-% 
-%         % Entrada=0;
-% 
-%         % if x*Muestra>=1
-%         %      Entrada=1000;
-%         %  end
-% 
-% 
-%         % if Salida(x)>0.25
-%         %     Entrada=-500*Salida(x);
-%         % elseif Salida(x)<-0.25
-%         %     Entrada=500*(-Salida(x));
-%         % end
-% 
-%         % if Salida(x)>0.25
-%         %     Entrada=-50;
-%         % elseif Salida(x)<-0.25
-%         %     Entrada=300;
-%         % end
-%   end
-% %-------------------------------------------------------------------------
+    N=5;
+    Muestra=0.01;
+    ts=0.01:Muestra:N;
+    
+     for x=1:N/Muestra
+            %% Bucle lazo abierto
+            %Entrada=-500*sin(20*pi*x*Muestra);
+            
+            % if x*Muestra>=1
+            %      Entrada=1000;
+            %  end
+    
+    
+            % if Salida(x)>0.25
+            %     Entrada=-500*Salida(x);
+            % elseif Salida(x)<-0.25
+            %     Entrada=500*(-Salida(x));
+            % end
+    
+            % if Salida(x)>0.25
+            %     Entrada=-50;
+            % elseif Salida(x)<-0.25
+            %     Entrada=300;
+            % end
+
+            Entrada=0;
+
+            SigEstado=A*EstadoAct+B*Entrada*n;
+            Salida(x)=C*EstadoAct+D*Entrada*n;
+            EstadoAct=SigEstado;
+      end
+    plot(ts,Salida);
+    ylim([-2 2]);
+    xlabel("Tiempo");
+    ylabel("Posicion esfera");
+    title("Simulacion Posicion Esfera");
+    %-------------------------------------------------------------------------
+
+end
