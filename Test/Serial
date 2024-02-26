@@ -1,0 +1,89 @@
+clear all;
+com='COM4';
+%elimino lo que este en el puerto serie
+delete(instrfind({'Port'},{com}));
+%Inicializo el puerto serial que utilizaré
+puerto_serial=serialport(com,1000000);
+%aviso de error en la conexion
+warning('off','MATLAB:serial:fscanf:unsuccessfulRead');
+%Abro el puerto serial
+fopen(puerto_serial);
+puerto_serial.Timeout=0.05;
+pause(5);
+
+%% create command
+comvec = uint8(1:32);
+%comvec= zeros(1,32,"uint8");
+comvec(1) = 0xFF;
+% echo comand 
+comvec(2)= 'P';
+
+
+position = int32(-8000);
+comvec(3)= uint8(bitshift(bitand(position,int32(0x000000FF)),   0));
+comvec(4)= uint8(bitshift(bitand(position,int32(0x0000FF00)),  -8));
+comvec(5)= uint8(bitshift(bitand(position,int32(0x00FF0000)), -16));
+comvec(6)= uint8(bitshift(bitand(position,int32(0xFF000000)), -24));
+%werid 255 1111 1111 -> 127 0111 1111
+if(position<0 && comvec(6) == 127)
+    comvec(6) = 255;
+end
+
+
+
+% position= uint32(bitand(position,bitshift(uint32(comvec(3)),   0)));
+% position= uint32(bitand(position,bitshift(uint32(comvec(4)),  -8)));
+% position= uint32(bitand(position,bitshift(uint32(comvec(5)), -16)));
+% position= uint32(bitand(position,bitshift(uint32(comvec(6)), -24)));
+
+% Calculate cs
+cs1=uint32(0);
+cs2=uint32(0);
+
+for x = 1:31
+        cs1 = cs1 + uint32(comvec(x));
+end
+cs1 = uint8(bitand(cs1,uint32(0xFF)));
+comvec(32)= cs1;
+
+%% Start Loop
+i=1;
+
+tic;
+while 1
+   T1(i)=toc;
+   write(puerto_serial,comvec,"uint8");
+   T2(i)=toc;
+   Read=char(read(puerto_serial, 32, "uint8"));
+   T3(i)=toc;
+   %Compruebo si hhe leido del puerto serie 
+   if isempty(Read)
+   else
+       %Compruebo bit de inicio
+       if Read(1)==0xFF
+           cs2=uint32(0);
+           for x = 1:30
+                cs2 = cs2 + uint32(Read(x));
+           end
+           cs2 = uint8(bitand(cs2,uint32(0xFF)));
+           %Compruebo el byte de suma (ultimo byte)
+           if Read(32)==cs2
+               %Cojo solo el numero que me devuelve
+               ReadAux=Read(6:11);
+               %Cambio del char a entero
+               Pos=str2double(ReadAux);
+               Print=Pos
+           else
+               Print="Error Sum"
+           end
+       else
+           Print="Error sync"
+       end
+       T4(i)=toc;
+       %Vacio buffer de lectura
+       %Read=[];
+   end
+   i=i+1;
+end
+
+clear puerto_serial;
