@@ -1,0 +1,71 @@
+%establezco el objeto cam como la webcam conectada por usb
+cam=webcam(2);
+
+% preview(cam)
+tic;
+
+%tomo una captura de la camara
+imagen=snapshot(cam);
+testcut = imagen(180:280, 1:640, 1:3);
+%imshow( testcut)
+
+% while 1
+%     imagen=snapshot(cam);
+%     toc
+%     i = i +1
+%     i / toc
+% end
+
+%mido el tamaño del frame de la camara
+framesize=size(cam);
+
+i=1;
+k=1;
+j=1;
+posicionAnt=0;
+anguloAnt=0;
+
+while 1
+    % capture image
+    
+    img0=snapshot(cam);
+
+    
+
+    img0 = img0(180:280, 1:640, 1:3);
+
+    %transform image
+    YIQ=rgb2ntsc(img0);
+
+    %cojo el valor de cromancia ya que los positivos es el naranja
+    img=imsubtract(YIQ(:,:,2),0);
+
+    % ---------------Filtros------------
+    %Filtro la imagen gris utilizando un filtro de wiener
+    %utilizando metodos estadisticos filtra el ruido de la imagen de 20x20
+    %alrededor de cada pixel sacando el valor medio
+    I=wiener2(img,[10,10]);
+    bw1=imbinarize(I,0.15);%0.2 es mucho pero creo que 0.25 es poco
+
+    %cada pixel de salida tiene como valor la media del 3x3 de alrededor
+    %del aimagen binarizada
+    bw2=medfilt2(bw1);
+
+    %Realiza una erosion de las imagenes blancas seguido de una dilatación con
+    %forma de disco de valor 1
+    bw3=imopen(bw2,strel('disk',5)); %el valor de 1 creo que es pequeño, deberia aumentarlo
+
+    %elimina las areas cuyos pixeles conjuntos sean menores a 1000
+    bw4=bwareaopen(bw3,100);
+
+    %Rellena de 1 todos aquellos 0 encerrados por 1
+    bw5=imfill(bw4,'holes');
+    imshow(img0);
+  
+    %numero de iteraciones
+    t(i)=toc;
+    i=i+1;
+    i/toc
+    %pause(0.001);
+end
+clear cam
