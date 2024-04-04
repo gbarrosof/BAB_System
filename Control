@@ -6,17 +6,24 @@ clc;clear all;
 %Control=false -> control por PID
 %Control=true -> control por Espacio de estados
 
-%Pelota = false -> Pelota naranja
+%Pelota = false -> Pelota de PIN-PON
 %Pelota = true -> Pelota acero
 
 %REF = en metros, posición que el controlador va a intentar alcanzar
+
+%Ruido=true -> señal para indicar que la camara tenga ruido blanco de
+%distribucion normal
 
 Modo=false;
 Control=true;
 Pelota=false;
 REF=0;
+Ruido=false;
+Varianza=1;
+
 
 %% Declaro los parametros de una de las bolas
+Ts=0.05; %tiempo de muestreo
 if Pelota==false
     %% Parametros bola naranja
     m=0.02;
@@ -27,10 +34,10 @@ if Pelota==false
     l=0.4;
     Jb=(1/12)*1*1^2; %0.09
     n=1/16; %relacion de transmision
-    Q_Pos = [10 0;0 1];
+    Q_Pos = [10 0;0 0.1];%[10 0;0 0.1]; %Q_Pos = [500 0;0 0.1]; %[25 0;0 0.1]; % funciona con ruido de 1% %[50 0;0 0.1]; %funciona sin ruido y con ruido de distribucion normal
     R_Pos = [0.1];
-    Q_Vel = [100 0 0; 0 100 0; 0 0 1];
-    R_Vel = [0.5]; 
+    Q_Vel=[10 0 0; 0 0.1 0; 0 0 1]; %El mejor de las simulaciones
+    R_Vel=[0.1];
 else
     %% Parametros bola de acero
     m=0.26;
@@ -41,8 +48,8 @@ else
     l=0.4;
     Jb=(1/12)*1*1^2; %0.09
     n=1/16; %relacion de transmision
-    Q_Pos = [1 0;0 1]; %[10 0;0 1]; %ruido blanco de la camara -> [1 0;0 1]
-    R_Pos = [1]; %[0.7] -> %ruido blanco de la camara -> [1]
+    Q_Pos = [1 0;0 0.1]; %[10 0;0 1]; %ruido blanco de la camara -> [1 0;0 1]
+    R_Pos = [0.5]; %[0.7] -> %ruido blanco de la camara -> [1]
     Q_Vel = [1 0 0; 0 1 0; 0 0 0.1];
     R_Vel = [1]; 
 end
@@ -52,31 +59,34 @@ if Modo==false
     %modelo continuo
     sys_ini=ss([0 1; 0 0],[0; n*(-m*g)/(m+Je/R^2)],[1 0],[0]);
     %modelo discreto
-    sysd = c2d(sys_ini,0.1);
+    sysd = c2d(sys_ini,Ts);
     A=sysd.A;
     B=sysd.B;
     C=sysd.C;
     D=sysd.D;
     %calculo de K del sistema discreto
     K = dlqr(A,B,Q_Pos,R_Pos);
+    %K=[K(1),K(2)/3];
 else
     %% Modelo B (velocidad)
     %modelo incluyendo el torque del motor
     sys_ini=ss([0 1 0 ;n*0 n*0 -n*m*g/(m+Je/R^2);0 0 0],[0;0;1],[1 0 0],[0]);    
     %modelo discreto
-    sysd = c2d(sys_ini,0.1);  
+    sysd = c2d(sys_ini,Ts);  
     A=sysd.A;
     B=sysd.B;
     C=sysd.C;
     D=sysd.D;
     %calculo de K del modelo discreto
     K = lqr(sysd,Q_Vel,R_Vel);
+
 end
 
 %% inicializo la camara
-
+Resolution=1280;
 %establezco el objeto cam como la webcam conectada por usb
 cam=webcam(2);
+cam.Resolution="1280x720";
 %tomo una captura de la camara
 imagen=snapshot(cam);
 %mido el tamaño del frame de la camara
@@ -115,10 +125,21 @@ dato=0;
 aux=0;
 AnguloMot(1)=0;
 giroAnt=0;
-
+posicionAnt=0;
+Ponderada=0;
+med=1;
+j=1;
+tj(1)=0;
+PosMedia(1)=0;
+%cont=1;
 
 ErrorPrev=0.0;
 SumError=0.0;
+
+filter = [0,0,0,0,0];
+filterIndex = 0;
+filterLen = 3;
+
 
 %%  inicio bucle de control
 tic;
@@ -128,7 +149,9 @@ while 1
 %tomo una captura de pantalla    
     img0=snapshot(cam);
 %Recorto la imagen para que tarde menos en procesarla
-    img0 = img0(180:280, 1:640, 1:3);
+    %img0 = img0(180:280, 1:640, 1:3); %Camara de 320x640px
+    %img0 = img0(300:350, 1:640, 1:3);
+    img0=img0(475:575, 1:1280, 1:3);
 %convierte los valores de rojo, verde y azul de una imagen RGB en valores de luminancia (Y) y crominancia (I y Q) de una imagen NTSC.
     YIQ=rgb2ntsc(img0);
 %cojo el valor de cromancia ya que los positivos es el naranja
@@ -172,7 +195,7 @@ while 1
 %realiza un bucle donde comprueba que el objeto correspondiente
   %mostrado es aproximadamente un circulo y muestra su centroide en la
   %pantalla de 640x400   
-
+t1(i)=toc;
     for n=1:N
 %% Detecto bola e incio en control
 % obtener centroide
@@ -180,9 +203,25 @@ while 1
 
 %obtener cuanto se aproxima a un circulo        
         Circulo=round(prop(n).Circularity);
-
-        if Circulo>0.90 %&& t(i)>2              
+     % if Control==true   
+     %    PosMedia(med)=c(1);
+     %    med=med+1;
+     %    if t(i)>2
+     %        flagCam=1;
+     %    else
+     %        med=1;
+     %    end
+     % else
+     %     med=4;
+     %     flagCam=1;
+     % end
+         if Circulo>0.80 % && med==5  && flagCam==1
 %% inicializo valores del bucle una vez detectada la bola
+j=j+1;
+tj(j)=toc;
+% med=1;
+% Ponderada=mean(PosMedia);
+
 % Si detecta un circulo es la esfera, por tanto entra en el bucle de control
 % resolucion (640px)
 
@@ -198,19 +237,60 @@ comvec(1) = 0xFF;
 if flag==0
       Centro=c(1);
       flag=1;
+      auxcentro(j-1)=Centro;
       
 end
-Pos=c(1)-Centro; 
+auxcentro(j)=c(1);
+% if Control==true
+% med=1;
+% Ponderada=mean(PosMedia);
+% Pos=Ponderada-Centro; 
+% Ponderada=0;
+% else
+Pos=c(1)-Centro;
+% end
 %% Posicion y velocidad de la bola
 
 %%----------------------ruido blanco camara--------------
-    % ruidoBlancoCamara(i)=2.5*(320/100)*(rand-0.5); % +-2.5 porciento de ruido
-    % Pos=Pos+ruidoBlancoCamara(i);
-    % posicion(1)=Pos*(0.4/320);
+if Ruido==true
+    %ruidoBlancoCamara(i)=4*(rand-0.5); % varianza de 16->sqrt(16)=4 ->5%
+    ruidoBlancoCamara(j)=(randn)*sqrt(Varianza); %distribuicion normal estandarizada, varianza de valor 1 y media 0
+    Pos=Pos+ruidoBlancoCamara(j);
+    posicion(1)=Pos*(l/(Resolution/2)); %para evitar que se vaya en la primera iteración
+end
 %--------------------------------------------------------
-posicion(i)=Pos*(0.4/320);
-velocidad(i)=(posicion(i)-posicion(i-1))/(t(i)-t(i-1));
+posicion(j)=-Pos*(l/(Resolution/2));
+posicionR(j) = posicion(j);
 
+if filterIndex == -1
+    filterIndex = 0;
+    filter(1) = posicionR(j);
+    filter(2) = posicionR(j);
+    filter(3) = posicionR(j);
+    filter(4) = posicionR(j);
+    filter(5) = posicionR(j);
+end
+
+filter(5) = filter(4);
+filter(4) = filter(3);
+filter(3) = filter(2);
+filter(2) = filter(1);
+filter(1) = posicionR(j);
+%%% filterIndex = filterIndex + 1
+posicion(j) = filter(1)*0.4+filter(2)*0.25+filter(3)*0.15+filter(4)*0.1+filter(5)*0.1;
+
+
+
+
+
+
+velocidad(j)=(posicion(j)-posicion(j-1))/((tj(j)-tj(j-1)));
+%% funciona bien
+% if posicion(j)>0
+%     velocidad(j)=velocidad(j)*(0.4-posicion(j))/0.4;
+% else
+%     velocidad(j)=velocidad(j)*(0.4+posicion(j))/0.4;
+% end
 
 %% _________________LAZO DE CONTROL________________________
 
@@ -219,18 +299,20 @@ if Control==true
     if Modo==false
         %% Poscion
         comvec(2)= 'P';
-        EstadoAct=[posicion(i);velocidad(i)];
-        error(i)=1000*(K(1)*REF-K*EstadoAct);
-        control=error(i);
+        EstadoAct=[posicion(j);velocidad(j)];
+        error(j)=(K(1)*REF-K*EstadoAct);
+        giro=error(j)*(4000/(2*pi)); %Con S3 activo
+        %giro=error(i)*(800/(2*pi)); %Si no tengo pins activos
+        %giro=error(i)*200;
 
-        if control>5000
-            control=5000;
-        elseif control<-5000
-            control=-5000;
+        if giro>5000
+            giro=5000;
+        elseif giro<-5000
+            giro=-5000;
         end
-        giro = control;
+        
         %giro=giro*(8000/(2*pi));
-        pasos(i)=giro;
+        pasos(j)=giro;
     else
         %% Velocidad
         comvec(2)= 'V';
@@ -238,18 +320,22 @@ if Control==true
             AnguloMot(i-1)=AnguloMot(length(AnguloMot));
         end
             Ang=(AnguloMot(i-1)*2*pi)/8000;
-            EstadoAct=[posicion(i);velocidad(i);Ang];
-            giro=(K(1)*REF-K*EstadoAct);
-            % Revoluciones por pasos
-            giro=giro*8000/(2*pi);
+            EstadoAct=[posicion(j);velocidad(i);Ang];
+            error(i)=(K(1)*REF-K*EstadoAct);
+            % Pasos por segundo:
+            giro=error(i)*800/(2*pi); 
+            % giro=error(i)*4000/(2*pi);             
+            
             % por ser velocidad relativa
-            %giro=giro-giroAnt;
+            giroAux=giro;
+            giro=giro-giroAnt;
+
             if giro>10000
                 giro=10000;
             elseif giro<-10000
                 giro=-10000;    
             end
-            %giroAnt=giro;
+            giroAnt=giroAux;
             pasosMot(i)=giro;
         
     end
@@ -259,34 +345,29 @@ else
         comvec(2)= 'P';
         Kp=10000;
         Ki=0;
-        Kd=80000;
+        Kd=200000;
     else
         comvec(2)= 'V';
         Kp=0;
         Ki=0;
         Kd=0;
     end
-    error(i)=-(REF-posicion(i));
-    ErrorPrev=error(i)-error(i-1);  
-    SumError=SumError+error(i);
+    error(j)=-(REF-posicion(j));
+    ErrorPrev=error(j)-error(j-1);  
+    SumError=SumError+error(j);
     
-    control=error(i)*Kp+ErrorPrev*Kd+SumError*Ki;
+    control=error(j)*Kp+ErrorPrev*Kd+SumError*Ki;
     if control>5000
        control=5000;
     elseif control<-5000
        control=-5000;
     end
-    pasos(i)=control;
+    pasos(j)=control;
     giro = control;
 end
-%% ----------------------Comunicacion Serial----------------------
-           
-            % %%_____ruido blanco posicion____
-                % ruidoBlancoPos(i)=2.5*(8000/100)*(rand-0.5);
-                % giro=giro+ruidoBlancoPos(i); % +-5 porciento de ruido
-            % %_________________________________
+%% ----------------------Comunicacion Serial----------------------        
 
-        position = int32(giro)
+        position = int32(giro);
         comvec(3)= uint8(bitshift(bitand(position,int32(0x000000FF)),   0));
         comvec(4)= uint8(bitshift(bitand(position,int32(0x0000FF00)),  -8));
         comvec(5)= uint8(bitshift(bitand(position,int32(0x00FF0000)), -16));
@@ -313,8 +394,8 @@ end
            %Compruebo si he leido del puerto serie 
            if isempty(Read)
                aux=aux+1;
-               VelocidadMot(i)=giro;
-               AnguloMot(i)=AnguloMot(i-1)+VelocidadMot(i)*(t(i)-t(i-1));
+               % VelocidadMot(i)=giro;
+               % AnguloMot(i)=AnguloMot(i-1)+VelocidadMot(i)*(t(i)-t(i-1));
            else
                Readaux=Read;
                %Compruebo bit de inicio
@@ -330,8 +411,10 @@ end
                        Read=Read(6:11);
                        %Cambio del char a entero
                        
-                       AnguloMot(i)=int32(str2double(Read));
-                       VelocidadMot(i)=(AnguloMot(i)-AnguloMot(i-1))/(t(i)-t(i-1));
+                       AnguloMot(j)=int32(str2double(Read));
+                       if Modo==true
+                        VelocidadMot(j)=(AnguloMot(j)-AnguloMot(j-1))/(tj(j)-tj(j-1));
+                       end
                        %Print=Pos
                    else
                        Print="Error Sum"
@@ -350,67 +433,64 @@ end
 %____________________________________________________    
 %% una vez finalizado el bucel grafico 
    if ~ishandle(wb)
-      if length(t)>length(posicion)
+      if length(tj)>length(posicion)
         posicion(i)=0;
       end
-      if length(t)>length(AnguloMot)
+      if length(tj)>length(AnguloMot)
         AnguloMot(i)=0;
       end
 if Modo==false
-      if length(t)>length(pasos)
+      if length(tj)>length(pasos)
         pasos(i)=0;
         error(i)=0;
       end
       
 else
-    if length(t)>length(pasosMot)
+    if length(tj)>length(pasosMot)
         pasos(i)=0;
     end
-    if length(t)>length(VelocidadMot)
+    if length(tj)>length(VelocidadMot)
         VelocidadMot(i)=0;
-      end
+    end
 end
 
 
-      if length(t)>length(velocidad)
+      if length(tj)>length(velocidad)
         velocidad(i)=0;
       end
-       % if length(t)>length(ruidoBlancoCamara)
-       %  ruidoBlancoCamara(i)=0;
-       % end
+      
 
-       % if length(t)>length(ruidoBlancoPos)
-       %  ruidoBlancoPos(i)=0;
-       % end
        
     figure(1);
-    plot(t(:),posicion(:),'r');
+    plot(tj(:),posicion(:),'g', 'DisplayName',"Posición real con filtro");
     xlabel('Tiempo (s)');
-    ylabel('Posición esfera');
-    title("Posición real de la esfera respecto al tiempo");
+    ylabel('Posición esfera (m)');
+    title("Posición de la esfera respecto al tiempo");
+    hold on
+    plot(tj(:),posicionR(:),'r', 'DisplayName',"Posición real sin filtro");
 
     figure(2); 
-    plot(t(:),velocidad(:),'r');
+    plot(tj(:),velocidad(:),'g', 'DisplayName',"Velocidad real");
     xlabel('Tiempo (s)');
-    ylabel('Velocidad esfera');
+    ylabel('Velocidad esfera (m/s)');
     title("Velocidad de la esfera respecto al tiempo");
 
 if Modo==false
     figure(3);  
-    yyaxis left
-    plot(t(:),AnguloMot(:),'r','DisplayName',"Pasos Reales");
+    % yyaxis left
+    plot(tj(:),AnguloMot(:),'g','DisplayName',"Pasos reales");
     hold on 
-    plot(t(:),pasos(:),'b','DisplayName',"Pasos Ideales");
-    yyaxis right
-    plot(t(:),error(:),'g','DisplayName',"Pasos Ideales");
+    plot(tj(:),pasos(:),'r','DisplayName',"Pasos ideales");
+    % yyaxis right
+    % plot(t(:),error(:),'g','DisplayName',"Control");
     xlabel('Tiempo (s)');
-    ylabel('Posición Motor');
-    title("Diferencia entre numero de pasos ideal y real");
+    ylabel('Posición del Motor (pasos)');
+    title("Diferencia entre numero de pasos");
 else
     figure(3);  
-    plot(t(:),VelocidadMot(:),'r','DisplayName',"Pasos Reales");
+    plot(tj(:),VelocidadMot(:),'g','DisplayName',"Pasos reales");
     hold on 
-    plot(t(:),pasosMot(:),'b','DisplayName',"Pasos Ideales");
+    plot(tj(:),pasosMot(:),'r','DisplayName',"Pasos Ideales");
    
     xlabel('Tiempo (s)');
     ylabel('Posición Motor');
@@ -418,11 +498,53 @@ else
 end
     
 
+if Ruido==1
+       if length(t)>length(ruidoBlancoCamara)
+        ruidoBlancoCamara(j)=0;
+       end
+    figure(4);  
+    plot(tj(:),ruidoBlancoCamara(:),'g','DisplayName',"Posicion Pelota");
+    xlabel('Tiempo (s)');
+    ylabel('Amplitud');
+    title("Ruido blanco de la Camara");
+end
+
+      if length(t)>length(error)
+        error(i)=0;
+      end
+
+ISE(1)=0;
+ITSE(1)=0;
+IAE(1)=0;
+ITAE(1)=0;
+for x=2:length(error)
+    ISE(x)=ISE(x-1)+Ts*(error(x)^2+error(x-1)^2)/2;
+    ITSE(x)=ITSE(x-1)+t(x-1)*Ts*(error(x)^2+error(x-1)^2)/2;
+    IAE(x)=IAE(x-1)+abs(Ts*(error(x)+error(x-1))/2);
+    ITAE(x)=ITAE(x-1)+abs(t(x-1)*Ts*(error(x)+error(x-1))/2);
+end
+% figure(5);
+% plot(t(:),control(:),'r','DisplayName',"error");
+% title("Error de posicion");
+figure(6)
+hold on
+plot(t(:),ISE(:),'r','DisplayName',"Error al cuadrado");
+plot(t(:),ITSE(:),'b','DisplayName',"Error al cuadrado  por tiempo");
+% figure(4)
+% hold on
+plot(t(:),IAE(:),'g','DisplayName',"Valor absoluto del error al cuadrado");
+plot(t(:),ITAE(:),'y','DisplayName',"Valor absoluto del error al cuadrado por tiempo");
+xlabel('Tiempo (s)');
+ylabel('Integrales del Error');
+title("Indices de desempeño");
+
+
         break
    else
     end
 %_____________________________________________________
 %numero de iteraciones
+%1/(t(i)-t(i-1))
     i=i+1;
 end
 %% limpio puertos
