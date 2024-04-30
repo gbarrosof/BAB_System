@@ -13,13 +13,20 @@ clc;clear all;
 
 %Ruido=true -> señal para indicar que la camara tenga ruido blanco de
 %distribucion normal
+Nombre="LQRAceroGolpe2";
+
 
 Modo=false;
 Control=true;
-Pelota=false;
+Pelota=true;
 REF=0;
 Ruido=false;
-Varianza=1;
+%Varianza=varianza de la distribucion normal;
+Varianza=sqrt(500); %Extremo LQR=1000 ExtremoPID=500; 
+
+%Cuadrada= señal cuadrada de valor REF de periodo de valor Cuadrada;
+%Cuadrada=<0 no hace señal cuadrada
+Cuadrada=0;
 
 
 %% Declaro los parametros de una de las bolas
@@ -35,7 +42,7 @@ if Pelota==false
     Jb=(1/12)*1*1^2; %0.09
     n=1/16; %relacion de transmision
     Q_Pos = [10 0;0 0.1];%[10 0;0 0.1]; %Q_Pos = [500 0;0 0.1]; %[25 0;0 0.1]; % funciona con ruido de 1% %[50 0;0 0.1]; %funciona sin ruido y con ruido de distribucion normal
-    R_Pos = [0.1];
+    R_Pos = [0.1];%R=0.1
     Q_Vel=[10 0 0; 0 0.1 0; 0 0 1]; %El mejor de las simulaciones
     R_Vel=[0.1];
 else
@@ -48,8 +55,8 @@ else
     l=0.4;
     Jb=(1/12)*1*1^2; %0.09
     n=1/16; %relacion de transmision
-    Q_Pos = [1 0;0 0.1]; %[10 0;0 1]; %ruido blanco de la camara -> [1 0;0 1]
-    R_Pos = [0.5]; %[0.7] -> %ruido blanco de la camara -> [1]
+    Q_Pos = [10 0;0 0.1]; %[10 0;0 1]; %ruido blanco de la camara -> [1 0;0 1]
+    R_Pos = [0.1]; %[0.7] -> %ruido blanco de la camara -> [1]
     Q_Vel = [1 0 0; 0 1 0; 0 0 0.1];
     R_Vel = [1]; 
 end
@@ -85,7 +92,7 @@ end
 %% inicializo la camara
 Resolution=1280;
 %establezco el objeto cam como la webcam conectada por usb
-cam=webcam(2);
+cam=webcam(1);
 cam.Resolution="1280x720";
 %tomo una captura de la camara
 imagen=snapshot(cam);
@@ -135,6 +142,7 @@ PosMedia(1)=0;
 
 ErrorPrev=0.0;
 SumError=0.0;
+Taux=0;
 
 filter = [0,0,0,0,0];
 filterIndex = 0;
@@ -146,6 +154,8 @@ tic;
 while 1
     %% bucle de camara
     t(i)=toc;
+    if Pelota==false
+        %% Pelota de PinPon
 %tomo una captura de pantalla    
     img0=snapshot(cam);
 %Recorto la imagen para que tarde menos en procesarla
@@ -179,6 +189,36 @@ while 1
 %la matriz L es una matriz de tamaño de la imagen binarizada pero con
 %enteros siendo: de valor 0 el fonde, de valor 1 el objeto 1, de valor 2
 %el objeto 2...
+    else
+        %% Pelota de acero
+            img0=snapshot(cam);
+   img1=img0(475:575, 1:1280, 1:3);
+Gr=rgb2gray(img1);
+%cojo el valor de cromancia ya que los positivos es el naranja
+   %img=imsubtract(YIQ(:,:,2),0);
+    % ---------------Filtros------------
+
+%Filtro la imagen gris utilizando un filtro de wiener
+%utilizando metodos estadisticos filtra el ruido de la imagen de 20x20
+%alrededor de cada pixel sacando el valor medio
+    bw=wiener2(Gr,[10,10]);
+    bw=imbinarize(bw,0.3);%0.2 es mucho pero creo que 0.25 es poco
+    bw=~bw;
+%cada pixel de salida tiene como valor la media del 3x3 de alrededor
+%del aimagen binarizada    
+    bw=medfilt2(bw);
+
+%Realiza una erosion de las imagenes blancas seguido de una dilatación con
+%forma de disco de valor 1
+    bw=imopen(bw,strel('disk',1)); %el valor de 1 creo que es pequeño, deberia aumentarlo
+    
+%elimina las areas cuyos pixeles conjuntos sean menores a 1000
+    bw=bwareaopen(bw,1000);
+
+%Rellena de 1 todos aquellos 0 encerrados por 1
+    bw=imfill(bw,'holes');
+    end
+
     [L,N]=bwlabel(bw);
 
 
@@ -191,6 +231,7 @@ while 1
 %muestra la matriz binarizada y con los filtros correspondientes
 % figure(1)
   %  imshow(bw);
+
 
 %realiza un bucle donde comprueba que el objeto correspondiente
   %mostrado es aproximadamente un circulo y muestra su centroide en la
@@ -254,7 +295,7 @@ Pos=c(1)-Centro;
 %%----------------------ruido blanco camara--------------
 if Ruido==true
     %ruidoBlancoCamara(i)=4*(rand-0.5); % varianza de 16->sqrt(16)=4 ->5%
-    ruidoBlancoCamara(j)=(randn)*sqrt(Varianza); %distribuicion normal estandarizada, varianza de valor 1 y media 0
+    ruidoBlancoCamara(j)=(randn)*(Varianza); %distribuicion normal estandarizada, varianza de valor 1 y media 0
     Pos=Pos+ruidoBlancoCamara(j);
     posicion(1)=Pos*(l/(Resolution/2)); %para evitar que se vaya en la primera iteración
 end
@@ -282,17 +323,13 @@ posicion(j) = filter(1)*0.4+filter(2)*0.25+filter(3)*0.15+filter(4)*0.1+filter(5
 
 
 
-
-
 velocidad(j)=(posicion(j)-posicion(j-1))/((tj(j)-tj(j-1)));
-%% funciona bien
-% if posicion(j)>0
-%     velocidad(j)=velocidad(j)*(0.4-posicion(j))/0.4;
-% else
-%     velocidad(j)=velocidad(j)*(0.4+posicion(j))/0.4;
-% end
-
 %% _________________LAZO DE CONTROL________________________
+
+if Cuadrada>0 && t(i)>Taux+Cuadrada
+    Taux=t(i);
+    REF=-REF;
+end
 
 if Control==true
     %% Espacio de estados
@@ -316,15 +353,15 @@ if Control==true
     else
         %% Velocidad
         comvec(2)= 'V';
-        if length(t)-1>(length(AnguloMot))
-            AnguloMot(i-1)=AnguloMot(length(AnguloMot));
+        if length(tj)-1>(length(AnguloMot))
+            AnguloMot(j-1)=AnguloMot(length(AnguloMot));
         end
-            Ang=(AnguloMot(i-1)*2*pi)/8000;
-            EstadoAct=[posicion(j);velocidad(i);Ang];
-            error(i)=(K(1)*REF-K*EstadoAct);
+            Ang=(AnguloMot(j-1)*2*pi)/4000;
+            EstadoAct=[posicion(j);velocidad(j);Ang];
+            error(j)=(K(1)*REF-K*EstadoAct);
             % Pasos por segundo:
-            giro=error(i)*800/(2*pi); 
-            % giro=error(i)*4000/(2*pi);             
+            % giro=error(i)*800/(2*pi); 
+            giro=error(j)*4000/(2*pi);             
             
             % por ser velocidad relativa
             giroAux=giro;
@@ -336,7 +373,7 @@ if Control==true
                 giro=-10000;    
             end
             giroAnt=giroAux;
-            pasosMot(i)=giro;
+            pasosMot(j)=giro;
         
     end
 else
@@ -394,8 +431,10 @@ end
            %Compruebo si he leido del puerto serie 
            if isempty(Read)
                aux=aux+1;
-               % VelocidadMot(i)=giro;
-               % AnguloMot(i)=AnguloMot(i-1)+VelocidadMot(i)*(t(i)-t(i-1));
+               if Modo==true
+                   % VelocidadMot(i)=giro;
+                   % AnguloMot(i)=AnguloMot(i-1)+VelocidadMot(i)*(t(i)-t(i-1));
+               end
            else
                Readaux=Read;
                %Compruebo bit de inicio
@@ -429,28 +468,42 @@ end
 %------------------------------------------------------
         end
     end
+
  %cuadro para poder candelar el bucle while 1
+ % if(t(i)>7)
+ %     break
+ % end
+
 %____________________________________________________    
 %% una vez finalizado el bucel grafico 
    if ~ishandle(wb)
-      if length(tj)>length(posicion)
-        posicion(i)=0;
-      end
+        break
+   else
+    end
+%_____________________________________________________
+%numero de iteraciones
+%1/(t(i)-t(i-1))
+    i=i+1;
+end
+
+ if length(tj)>length(posicion)
+        posicion(j)=0;
+ end
       if length(tj)>length(AnguloMot)
-        AnguloMot(i)=0;
+        AnguloMot(j)=0;
       end
 if Modo==false
       if length(tj)>length(pasos)
-        pasos(i)=0;
+        pasos(j)=0;
         error(i)=0;
       end
       
 else
     if length(tj)>length(pasosMot)
-        pasos(i)=0;
+        pasos(j)=0;
     end
     if length(tj)>length(VelocidadMot)
-        VelocidadMot(i)=0;
+        VelocidadMot(j)=0;
     end
 end
 
@@ -460,14 +513,23 @@ end
       end
       
 
-       
+    if Ruido==1   
     figure(1);
-    plot(tj(:),posicion(:),'g', 'DisplayName',"Posición real con filtro");
+    plot(tj(:),posicion(:),'g', 'DisplayName',"Posición con Filtro");
     xlabel('Tiempo (s)');
     ylabel('Posición esfera (m)');
-    title("Posición de la esfera respecto al tiempo");
+    title("Posición de la esfera respecto al tiempo. Varianza= " + string((Varianza*Varianza)));
     hold on
-    plot(tj(:),posicionR(:),'r', 'DisplayName',"Posición real sin filtro");
+    plot(tj(:),posicionR(:),'r', 'DisplayName',"Posición sin Filtro");
+    else
+        figure(1);
+        plot(tj(:),posicion(:),'g', 'DisplayName',"Posición real con filtro");
+        xlabel('Tiempo (s)');
+        ylabel('Posición esfera (m)');
+        title("Posición de la esfera respecto al tiempo");
+        hold on
+        plot(tj(:),posicionR(:),'r', 'DisplayName',"Posición real sin filtro");
+    end
 
     figure(2); 
     plot(tj(:),velocidad(:),'g', 'DisplayName',"Velocidad real");
@@ -503,13 +565,13 @@ if Ruido==1
         ruidoBlancoCamara(j)=0;
        end
     figure(4);  
-    plot(tj(:),ruidoBlancoCamara(:),'g','DisplayName',"Posicion Pelota");
+    plot(tj(:),ruidoBlancoCamara(:),'g','DisplayName',"Varianza="+string((Varianza*Varianza)));
     xlabel('Tiempo (s)');
     ylabel('Amplitud');
     title("Ruido blanco de la Camara");
 end
 
-      if length(t)>length(error)
+      if length(tj)>length(error)
         error(i)=0;
       end
 
@@ -528,25 +590,36 @@ end
 % title("Error de posicion");
 figure(6)
 hold on
-plot(t(:),ISE(:),'r','DisplayName',"Error al cuadrado");
-plot(t(:),ITSE(:),'b','DisplayName',"Error al cuadrado  por tiempo");
+plot(tj(:),ISE(:),'r','DisplayName',"Error al cuadrado");
+plot(tj(:),ITSE(:),'b','DisplayName',"Error al cuadrado  por tiempo");
 % figure(4)
 % hold on
-plot(t(:),IAE(:),'g','DisplayName',"Valor absoluto del error al cuadrado");
-plot(t(:),ITAE(:),'y','DisplayName',"Valor absoluto del error al cuadrado por tiempo");
+plot(tj(:),IAE(:),'g','DisplayName',"Valor absoluto del error al cuadrado");
+plot(tj(:),ITAE(:),'y','DisplayName',"Valor absoluto del error al cuadrado por tiempo");
+plot(tj(:),error(:),'k','DisplayName',"Valor del Error");
+
 xlabel('Tiempo (s)');
 ylabel('Integrales del Error');
 title("Indices de desempeño");
 
 
-        break
-   else
-    end
-%_____________________________________________________
-%numero de iteraciones
-%1/(t(i)-t(i-1))
-    i=i+1;
-end
+
+writematrix(posicion, 'Graficas\'+ Nombre + '_posicion1.txt')
+writematrix(posicionR, 'Graficas\'+ Nombre + '_posicionR1.txt')
+
+writematrix(velocidad, 'Graficas\'+ Nombre + '_velocidad1.txt')
+
+writematrix(AnguloMot, 'Graficas\'+ Nombre + '_angmot1.txt')
+writematrix(pasos, 'Graficas\'+ Nombre + '_pasos1.txt')
+
+writematrix(ISE, 'Graficas\'+ Nombre + '_ISE.txt')
+writematrix(ITSE, 'Graficas\'+ Nombre + '_ITSE.txt')
+writematrix(IAE, 'Graficas\'+ Nombre + '_IAE.txt')
+writematrix(ITAE, 'Graficas\'+ Nombre + '_ITAE.txt')
+writematrix(error, 'Graficas\'+ Nombre + '_error.txt')
+
+writematrix(tj, 'Graficas\'+ Nombre + '_tiempo1.txt')
+writematrix(t, 'Graficas\'+ Nombre + '_tiempoTot.txt')
 %% limpio puertos
 clear puerto_serial;
 clear cam;
