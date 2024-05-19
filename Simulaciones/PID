@@ -1,0 +1,24 @@
+clc;clear all;
+
+%Prop=4000/(4*pi);
+
+    Ts=0.05;
+    Kp=15.1594;
+    Ki=0;
+    Kd=10.1062;
+    
+    Ts=0.05;
+
+    Gp=tf([0.5937],[1,0,0]);
+    Gc=Kp+tf([Ki],[1, 0])+tf([Kd, 0],[1]);
+    
+    Gc_L=(Gc*Gp)/(1+Gc*Gp);
+    Gc_L=c2d(Gc_L,Ts);
+    
+    [y,t]=step(0.1*Gc_L);
+    figure(1)
+    hold on
+    plot(t,y)
+    xlabel("Tiempo (s)");
+    ylabel("Posicion esfera (m)");
+    title("Simulacion de respuesta del PID, Kp=15, Kd=10");
