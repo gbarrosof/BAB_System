@@ -382,7 +382,7 @@ else
         comvec(2)= 'P';
         Kp=10000;
         Ki=0;
-        Kd=200000;
+        Kd=6500; %10000 %200000
     else
         comvec(2)= 'V';
         Kp=0;
@@ -390,7 +390,7 @@ else
         Kd=0;
     end
     error(j)=-(REF-posicion(j));
-    ErrorPrev=error(j)-error(j-1);  
+    ErrorPrev=(error(j)-error(j-1))/(tj(j-1)-tj(j));  
     SumError=SumError+error(j);
     
     control=error(j)*Kp+ErrorPrev*Kd+SumError*Ki;
